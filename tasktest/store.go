@@ -5,35 +5,35 @@ import (
 	"sort"
 	"sync"
 
-	tasks "github.com/benaskins/axon-tasks"
+	"github.com/benaskins/axon-task"
 )
 
-// MemoryStore implements tasks.Store using an in-memory map. Used for tests.
+// MemoryStore implements task.Store using an in-memory map. Used for tests.
 type MemoryStore struct {
 	mu    sync.Mutex
-	tasks map[string]*tasks.Task
+	items map[string]*task.Task
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{tasks: make(map[string]*tasks.Task)}
+	return &MemoryStore{items: make(map[string]*task.Task)}
 }
 
 func (s *MemoryStore) RunMigrations(_ context.Context) error {
 	return nil
 }
 
-func (s *MemoryStore) Save(_ context.Context, task *tasks.Task) error {
+func (s *MemoryStore) Save(_ context.Context, t *task.Task) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	copy := *task
-	s.tasks[task.ID] = &copy
+	copy := *t
+	s.items[t.ID] = &copy
 	return nil
 }
 
-func (s *MemoryStore) Get(_ context.Context, id string) (*tasks.Task, error) {
+func (s *MemoryStore) Get(_ context.Context, id string) (*task.Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.tasks[id]
+	t, ok := s.items[id]
 	if !ok {
 		return nil, nil
 	}
@@ -41,12 +41,12 @@ func (s *MemoryStore) Get(_ context.Context, id string) (*tasks.Task, error) {
 	return &copy, nil
 }
 
-func (s *MemoryStore) ListByAgent(_ context.Context, agentSlug string, limit, offset int) ([]tasks.Task, error) {
+func (s *MemoryStore) ListByAgent(_ context.Context, agentSlug string, limit, offset int) ([]task.Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var matching []tasks.Task
-	for _, t := range s.tasks {
+	var matching []task.Task
+	for _, t := range s.items {
 		if t.RequestedBy == agentSlug {
 			matching = append(matching, *t)
 		}

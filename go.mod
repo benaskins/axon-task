@@ -1,4 +1,4 @@
-module github.com/benaskins/axon-tasks
+module github.com/benaskins/axon-task
 
 go 1.24.1
 
