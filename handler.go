@@ -42,9 +42,8 @@ func NewTaskHandler(executor *Executor, repoPath string) *TaskHandler {
 }
 
 func (h *TaskHandler) SubmitTask(w http.ResponseWriter, r *http.Request) {
-	var req SubmitRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	req, ok := axon.DecodeJSON[SubmitRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -56,31 +55,31 @@ func (h *TaskHandler) SubmitTask(w http.ResponseWriter, r *http.Request) {
 	case "image_generation":
 		h.submitImageGeneration(w, req.Params, clientCN)
 	default:
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "type must be \"claude_session\" or \"image_generation\""})
+		axon.WriteError(w, http.StatusBadRequest, "type must be \"claude_session\" or \"image_generation\"")
 	}
 }
 
 func (h *TaskHandler) submitClaudeSession(w http.ResponseWriter, raw json.RawMessage, clientCN string) {
 	var params ClaudeSessionParams
 	if err := json.Unmarshal(raw, &params); err != nil {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid params for claude_session"})
+		axon.WriteError(w, http.StatusBadRequest, "invalid params for claude_session")
 		return
 	}
 
 	if params.Description == "" {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "description is required"})
+		axon.WriteError(w, http.StatusBadRequest, "description is required")
 		return
 	}
 	if params.RequestedBy == "" {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "requested_by is required"})
+		axon.WriteError(w, http.StatusBadRequest, "requested_by is required")
 		return
 	}
 	if params.Username == "" {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "username is required"})
+		axon.WriteError(w, http.StatusBadRequest, "username is required")
 		return
 	}
 	if !axon.ValidSlug.MatchString(params.Username) {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "username must be lowercase alphanumeric with hyphens between words"})
+		axon.WriteError(w, http.StatusBadRequest, "username must be lowercase alphanumeric with hyphens between words")
 		return
 	}
 
@@ -95,7 +94,7 @@ func (h *TaskHandler) submitClaudeSession(w http.ResponseWriter, raw json.RawMes
 	task, err := h.executor.Submit(params.Description, params.RequestedBy, params.Username)
 	if err != nil {
 		slog.Error("failed to submit task", "error", err, "requested_by", params.RequestedBy, "client_cn", clientCN)
-		axon.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		axon.WriteError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 
@@ -108,20 +107,20 @@ func (h *TaskHandler) submitClaudeSession(w http.ResponseWriter, raw json.RawMes
 func (h *TaskHandler) submitImageGeneration(w http.ResponseWriter, raw json.RawMessage, clientCN string) {
 	var params ImageTaskParams
 	if err := json.Unmarshal(raw, &params); err != nil {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid params for image_generation"})
+		axon.WriteError(w, http.StatusBadRequest, "invalid params for image_generation")
 		return
 	}
 
 	if params.Prompt == "" {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "prompt is required"})
+		axon.WriteError(w, http.StatusBadRequest, "prompt is required")
 		return
 	}
 	if params.AgentSlug == "" {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "agent_slug is required"})
+		axon.WriteError(w, http.StatusBadRequest, "agent_slug is required")
 		return
 	}
 	if params.ImageID == "" {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "image_id is required"})
+		axon.WriteError(w, http.StatusBadRequest, "image_id is required")
 		return
 	}
 
@@ -136,7 +135,7 @@ func (h *TaskHandler) submitImageGeneration(w http.ResponseWriter, raw json.RawM
 	task, err := h.executor.SubmitImageTask(&params)
 	if err != nil {
 		slog.Error("failed to submit image task", "error", err, "agent_slug", params.AgentSlug, "client_cn", clientCN)
-		axon.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		axon.WriteError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 
@@ -149,13 +148,13 @@ func (h *TaskHandler) submitImageGeneration(w http.ResponseWriter, raw json.RawM
 func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "task id is required"})
+		axon.WriteError(w, http.StatusBadRequest, "task id is required")
 		return
 	}
 
 	task, ok := h.executor.Get(id)
 	if !ok {
-		axon.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "task not found"})
+		axon.WriteError(w, http.StatusNotFound, "task not found")
 		return
 	}
 
@@ -165,7 +164,7 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	agent := r.URL.Query().Get("agent")
 	if agent == "" {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "agent query parameter is required"})
+		axon.WriteError(w, http.StatusBadRequest, "agent query parameter is required")
 		return
 	}
 
@@ -186,7 +185,7 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	tasks, err := h.executor.Store().ListByAgent(r.Context(), agent, limit, offset)
 	if err != nil {
 		slog.Error("failed to list tasks", "agent", agent, "error", err)
-		axon.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list tasks"})
+		axon.WriteError(w, http.StatusInternalServerError, "failed to list tasks")
 		return
 	}
 
@@ -198,23 +197,22 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TaskHandler) IssueAgentCert(w http.ResponseWriter, r *http.Request) {
-	var req IssueAgentCertRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	req, ok := axon.DecodeJSON[IssueAgentCertRequest](w, r)
+	if !ok {
 		return
 	}
 
 	if req.Slug == "" || req.Username == "" {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "slug and username are required"})
+		axon.WriteError(w, http.StatusBadRequest, "slug and username are required")
 		return
 	}
 
 	if !axon.ValidSlug.MatchString(req.Slug) {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "slug must be lowercase alphanumeric with hyphens between words"})
+		axon.WriteError(w, http.StatusBadRequest, "slug must be lowercase alphanumeric with hyphens between words")
 		return
 	}
 	if !axon.ValidSlug.MatchString(req.Username) {
-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "username must be lowercase alphanumeric with hyphens between words"})
+		axon.WriteError(w, http.StatusBadRequest, "username must be lowercase alphanumeric with hyphens between words")
 		return
 	}
 
@@ -227,7 +225,7 @@ func (h *TaskHandler) IssueAgentCert(w http.ResponseWriter, r *http.Request) {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		slog.Error("agent cert issuance failed", "slug", req.Slug, "username", req.Username, "client_cn", clientCN, "error", err, "output", string(output))
-		axon.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "cert issuance failed: " + err.Error()})
+		axon.WriteError(w, http.StatusInternalServerError, "cert issuance failed: "+err.Error())
 		return
 	}
 
