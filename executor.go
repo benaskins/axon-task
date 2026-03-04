@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -73,6 +74,7 @@ type Executor struct {
 	store      Store
 
 	// Image generation dependencies (nil if not configured)
+	imageMu         sync.RWMutex
 	imageGen        ImageGenerator
 	privateImageGen ImageGenerator
 	imageStore      *ImageStore
@@ -99,11 +101,15 @@ func NewExecutor(claudePath, repoPath, model string, store Store) *Executor {
 
 // SetImageGen configures image generation support.
 func (e *Executor) SetImageGen(gen ImageGenerator, imgStore *ImageStore) {
+	e.imageMu.Lock()
+	defer e.imageMu.Unlock()
 	e.imageGen = gen
 	e.imageStore = imgStore
 }
 
 func (e *Executor) SetPrivateImageGen(gen ImageGenerator) {
+	e.imageMu.Lock()
+	defer e.imageMu.Unlock()
 	e.privateImageGen = gen
 }
 
@@ -122,9 +128,10 @@ func (e *Executor) Submit(description, requestedBy, username string) (*Task, err
 		return nil, fmt.Errorf("persist task: %w", err)
 	}
 
+	snapshot := *task
 	select {
 	case e.queue <- task:
-		return task, nil
+		return &snapshot, nil
 	default:
 		task.Status = StatusFailed
 		task.Error = "queue full"
@@ -137,7 +144,10 @@ func (e *Executor) Submit(description, requestedBy, username string) (*Task, err
 
 // SubmitImageTask submits an image generation task.
 func (e *Executor) SubmitImageTask(params *ImageTaskParams) (*Task, error) {
-	if e.imageGen == nil {
+	e.imageMu.RLock()
+	configured := e.imageGen != nil
+	e.imageMu.RUnlock()
+	if !configured {
 		return nil, fmt.Errorf("image generation not configured")
 	}
 
@@ -155,9 +165,10 @@ func (e *Executor) SubmitImageTask(params *ImageTaskParams) (*Task, error) {
 		return nil, fmt.Errorf("persist task: %w", err)
 	}
 
+	snapshot := *task
 	select {
 	case e.imageQueue <- imageTask{task: task, params: params}:
-		return task, nil
+		return &snapshot, nil
 	default:
 		task.Status = StatusFailed
 		task.Error = "image queue full"
@@ -274,9 +285,23 @@ func (e *Executor) executeImage(task *Task, params *ImageTaskParams) {
 		}
 	}
 
+	e.imageMu.RLock()
 	gen := e.imageGen
 	if params.Private && e.privateImageGen != nil {
 		gen = e.privateImageGen
+	}
+	imgStore := e.imageStore
+	e.imageMu.RUnlock()
+
+	if gen == nil {
+		task.Status = StatusFailed
+		task.Error = "image generator not configured"
+		completed := time.Now()
+		task.CompletedAt = &completed
+		if err := e.store.Save(context.Background(), task); err != nil {
+			slog.Error("failed to persist image task result", "task_id", task.ID, "error", err)
+		}
+		return
 	}
 
 	imageData, err := gen.GenerateImage(ctx, params.Prompt, refImage)
@@ -288,7 +313,11 @@ func (e *Executor) executeImage(task *Task, params *ImageTaskParams) {
 		task.Error = err.Error()
 		slog.Error("image generation failed", "task_id", task.ID, "error", err)
 	} else {
-		if err := e.imageStore.SaveWithID(params.ImageID, imageData); err != nil {
+		if imgStore == nil {
+			task.Status = StatusFailed
+			task.Error = "image store not configured"
+			slog.Error("image store not configured", "task_id", task.ID)
+		} else if err := imgStore.SaveWithID(params.ImageID, imageData); err != nil {
 			task.Status = StatusFailed
 			task.Error = fmt.Sprintf("failed to save image: %v", err)
 			slog.Error("failed to save image", "task_id", task.ID, "error", err)
