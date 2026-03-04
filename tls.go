@@ -41,7 +41,7 @@ func LoadTLSConfig(caCertPath string) (*tls.Config, error) {
 		return nil, fmt.Errorf("failed to parse CA certificate")
 	}
 	return &tls.Config{
-		ClientAuth: tls.VerifyClientCertIfGiven,
+		ClientAuth: tls.RequireAndVerifyClientCert,
 		ClientCAs:  caPool,
 		MinVersion: tls.VersionTLS12,
 	}, nil

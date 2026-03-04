@@ -178,7 +178,10 @@ func TestSubmitImageTaskWithMockGen(t *testing.T) {
 	defer executor.Shutdown()
 
 	imgDir := t.TempDir()
-	imgStore := NewImageStore(imgDir)
+	imgStore, err := NewImageStore(imgDir)
+	if err != nil {
+		t.Fatalf("failed to create image store: %v", err)
+	}
 	executor.SetImageGen(&mockImageGen{data: []byte("fake-png-data")}, imgStore)
 
 	task, err := executor.SubmitImageTask(&ImageTaskParams{

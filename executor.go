@@ -420,8 +420,9 @@ func sanitizeName(s string) string {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "...(truncated)"
+	return string(runes[:maxLen]) + "...(truncated)"
 }
