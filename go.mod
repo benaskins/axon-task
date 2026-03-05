@@ -2,8 +2,9 @@ module github.com/benaskins/axon-task
 
 go 1.24.1
 
+require github.com/benaskins/axon v0.3.0
+
 require (
-	github.com/benaskins/axon v0.1.0
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.11.2
 	golang.org/x/image v0.36.0
@@ -33,5 +34,3 @@ require (
 	golang.org/x/text v0.34.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 )
-
-replace github.com/benaskins/axon => ../axon

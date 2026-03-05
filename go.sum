@@ -1,3 +1,5 @@
+github.com/benaskins/axon v0.3.0 h1:ml2L6CIjhoMebSNJ2OfojV9hpPtYQ9tkpK6t5KMOMOQ=
+github.com/benaskins/axon v0.3.0/go.mod h1:BoDoM3zT9nhUqCk1n8yfhTxQuNSrdvHjzqku0F66GkY=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/caarlos0/env/v11 v11.3.1 h1:cArPWC15hWmEt+gWk7YBi7lEXTXCvpaSdCiZE2X5mCA=
