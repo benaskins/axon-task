@@ -36,4 +36,4 @@ mux.HandleFunc("GET /api/tasks", handler.ListTasks)
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
