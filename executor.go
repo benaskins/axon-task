@@ -73,6 +73,10 @@ type Executor struct {
 	model      string
 	store      Store
 
+	// PromptBuilder builds the prompt sent to Claude for a task.
+	// If nil, DefaultPromptBuilder is used.
+	PromptBuilder func(description string) string
+
 	// Image generation dependencies (nil if not configured)
 	imageMu         sync.RWMutex
 	imageGen        ImageGenerator
@@ -232,7 +236,11 @@ func (e *Executor) execute(task *Task) {
 
 	slog.Info("executing task", "task_id", task.ID, "description", task.Description)
 
-	prompt := buildPrompt(task.Description)
+	pb := e.PromptBuilder
+	if pb == nil {
+		pb = DefaultPromptBuilder
+	}
+	prompt := pb(task.Description)
 
 	ctx, cancel := context.WithTimeout(context.Background(), TaskTimeout)
 	defer cancel()
@@ -402,30 +410,19 @@ func filterEnv(env []string) []string {
 	return filtered
 }
 
-func buildPrompt(description string) string {
-	return fmt.Sprintf(`You are modifying the Aurelia chat service on behalf of an AI agent.
-
-Scope — you may ONLY modify files in:
-- services/chat/ (Go backend + SvelteKit frontend)
-
-Agent skills architecture — if the change involves adding or modifying an agent skill,
-you must integrate it in ALL of these places:
-1. services/chat/tools.go — tool definition (buildXxxTool function) + add to AvailableSkills + case in buildToolsForAgent
-2. services/chat/handler.go — tool execution case in streamChat
-3. services/chat/agents.go — system prompt guidance in buildSystemPrompt
-4. services/chat/tool_router.go — add to the few-shot examples in the prompt
+// DefaultPromptBuilder is the generic prompt used when no custom PromptBuilder is set.
+func DefaultPromptBuilder(description string) string {
+	return fmt.Sprintf(`You are modifying code on behalf of an AI agent.
 
 Steps:
-1. Read the project CLAUDE.md for context.
+1. Read any project documentation for context.
 2. Make the requested change.
-3. Run 'just test chat' to verify tests pass. Fix any failures.
+3. Run tests to verify. Fix any failures.
 4. Add tests for new behavior.
 5. Stage all changed files with 'git add'.
 6. Write a conventional commit message to .commit-message (the file, not a command).
-   Just the message text. The wrapper script handles committing for you.
 
-Do NOT run any VCS commit/push commands or ship services.
-Do NOT modify infrastructure, other services, or system config.
+Do NOT run any VCS commit/push commands.
 
 Change request: %s`, description)
 }

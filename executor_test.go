@@ -32,16 +32,16 @@ func TestFilterEnv(t *testing.T) {
 	}
 }
 
-func TestBuildPrompt(t *testing.T) {
-	prompt := buildPrompt("change the greeting to say hello")
+func TestDefaultPromptBuilder(t *testing.T) {
+	prompt := DefaultPromptBuilder("change the greeting to say hello")
 	if prompt == "" {
 		t.Fatal("prompt should not be empty")
 	}
 	if !contains(prompt, "change the greeting to say hello") {
 		t.Error("prompt should contain the description")
 	}
-	if !contains(prompt, "services/chat/") {
-		t.Error("prompt should reference the chat service scope")
+	if !contains(prompt, ".commit-message") {
+		t.Error("prompt should instruct Claude to write commit message to file")
 	}
 	if contains(prompt, "git commit") {
 		t.Error("prompt should not instruct Claude to commit")
@@ -49,11 +49,28 @@ func TestBuildPrompt(t *testing.T) {
 	if contains(prompt, "deploy") {
 		t.Error("prompt should not instruct Claude to deploy")
 	}
-	if contains(prompt, "signal-send") {
-		t.Error("prompt should not instruct Claude to send notifications")
+	if contains(prompt, "Aurelia") {
+		t.Error("default prompt should not reference Aurelia")
 	}
-	if !contains(prompt, ".commit-message") {
-		t.Error("prompt should instruct Claude to write commit message to file")
+}
+
+func TestCustomPromptBuilder(t *testing.T) {
+	store := newMemoryStore()
+	executor := NewExecutor("claude", "/tmp", "test", store)
+	defer executor.Shutdown()
+
+	called := false
+	executor.PromptBuilder = func(description string) string {
+		called = true
+		return "custom: " + description
+	}
+
+	result := executor.PromptBuilder("do something")
+	if !called {
+		t.Error("custom prompt builder should have been called")
+	}
+	if result != "custom: do something" {
+		t.Errorf("unexpected prompt: %s", result)
 	}
 }
 
