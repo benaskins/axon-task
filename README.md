@@ -1,6 +1,6 @@
 # axon-task
 
-An asynchronous task runner that executes Claude Code sessions and image generation jobs.
+An asynchronous task runner that executes Claude Code sessions and image generation jobs. Part of [lamina](https://github.com/benaskins/lamina) — each axon package can be used independently.
 
 Tasks are submitted via HTTP, queued, and executed with progress tracking.
 
