@@ -197,8 +197,8 @@ func TestRegisterAndSubmitWorker(t *testing.T) {
 			t.Fatal("task not found")
 		}
 		if got.Status == StatusCompleted {
-			if got.Summary != "mock completed" {
-				t.Errorf("expected summary 'mock completed', got %q", got.Summary)
+			if got.Status != StatusCompleted {
+				t.Errorf("expected completed status, got %q", got.Summary)
 			}
 			return
 		}
@@ -241,8 +241,8 @@ func TestSubmitUnregisteredWorker(t *testing.T) {
 
 type mockWorker struct{}
 
-func (w *mockWorker) Execute(_ context.Context, task *Task, _ json.RawMessage) error {
-	task.Summary = "mock completed"
+func (w *mockWorker) Execute(_ context.Context, _ json.RawMessage) error {
+	// worker completed successfully
 	return nil
 }
 

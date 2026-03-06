@@ -47,9 +47,9 @@ type Task struct {
 
 // Worker executes a task. Domain packages implement this interface.
 // The params argument contains the JSON-encoded task-specific parameters.
-// Workers may update the task's Summary and ArtifactID fields.
+
 type Worker interface {
-	Execute(ctx context.Context, task *Task, params json.RawMessage) error
+	Execute(ctx context.Context, params json.RawMessage) error
 }
 
 type queuedTask struct {
@@ -196,7 +196,7 @@ func (e *Executor) execute(task *Task, params json.RawMessage) {
 		if !ok {
 			err = fmt.Errorf("no worker registered for task type %q", task.Type)
 		} else {
-			err = w.Execute(ctx, task, params)
+			err = w.Execute(ctx, params)
 		}
 	}
 
