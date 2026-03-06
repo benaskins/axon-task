@@ -1,8 +1,8 @@
 # axon-task
 
-An asynchronous task runner that executes Claude Code sessions and image generation jobs. Part of [lamina](https://github.com/benaskins/lamina) — each axon package can be used independently.
+A generic asynchronous task runner with pluggable workers. Part of [lamina](https://github.com/benaskins/lamina) — each axon package can be used independently.
 
-Tasks are submitted via HTTP, queued, and executed with progress tracking.
+Tasks are submitted via HTTP, queued, and executed by registered workers. Domain packages provide `Worker` implementations for specific task types.
 
 ## Install
 
@@ -17,6 +17,10 @@ Requires Go 1.24+.
 ```go
 store, _ := task.NewPostgresStore(databaseURL)
 executor := task.NewExecutor(claudePath, repoPath, model, store)
+
+// Register domain workers
+executor.RegisterWorker("image_generation", imageWorker)
+
 handler := task.NewTaskHandler(executor, repoPath)
 
 mux.HandleFunc("POST /api/tasks", handler.SubmitTask)
@@ -26,13 +30,11 @@ mux.HandleFunc("GET /api/tasks", handler.ListTasks)
 
 ### Key types
 
+- `Worker` — interface for task execution (`Execute(ctx, params)`)
 - `Task` — task definition with status tracking
-- `Executor` — queues and executes tasks (Claude sessions, image generation)
+- `Executor` — queues tasks and dispatches to registered workers
 - `Store` — persistence interface for task state
-- `PostgresStore` — PostgreSQL implementation
 - `TaskHandler` — HTTP handler for task submission and status
-- `ComfyUIClient` — ComfyUI image generation client
-- `ImageStore` — local image file storage with thumbnails
 
 ## License
 
