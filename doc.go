@@ -1,4 +1,4 @@
-// Package task provides an asynchronous task runner that executes
-// Claude Code sessions and image generation jobs. Tasks are submitted
-// via HTTP, queued, and executed with progress tracking.
+// Package task provides a generic asynchronous task runner. Tasks are
+// submitted via HTTP, queued, and executed by registered workers.
+// Domain packages provide Worker implementations for specific task types.
 package task

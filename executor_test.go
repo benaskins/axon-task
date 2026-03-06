@@ -2,6 +2,8 @@ package task
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -173,45 +175,18 @@ func TestSubmitQueueFull(t *testing.T) {
 	}
 }
 
-func TestSubmitImageTaskNoGen(t *testing.T) {
+func TestRegisterAndSubmitWorker(t *testing.T) {
 	store := newMemoryStore()
 	executor := NewExecutor("claude", "/tmp", "test", store)
 	defer executor.Shutdown()
 
-	// Without SetImageGen, should fail
-	_, err := executor.SubmitImageTask(&ImageTaskParams{
-		Prompt:    "a sunset over mountains",
-		AgentSlug: "test-agent",
-		ImageID:   "img-123",
-	})
-	if err == nil {
-		t.Error("expected error when image gen not configured")
-	}
-}
+	// Register a mock worker
+	executor.RegisterWorker("test_type", &mockWorker{})
 
-func TestSubmitImageTaskWithMockGen(t *testing.T) {
-	store := newMemoryStore()
-	executor := NewExecutor("claude", "/tmp", "test", store)
-	defer executor.Shutdown()
-
-	imgDir := t.TempDir()
-	imgStore, err := NewImageStore(imgDir)
+	params, _ := json.Marshal(map[string]string{"key": "value"})
+	task, err := executor.SubmitTask("test_type", "test task", "agent", "user", "", params)
 	if err != nil {
-		t.Fatalf("failed to create image store: %v", err)
-	}
-	executor.SetImageGen(&mockImageGen{data: []byte("fake-png-data")}, imgStore)
-
-	task, err := executor.SubmitImageTask(&ImageTaskParams{
-		Prompt:    "a sunset over mountains",
-		AgentSlug: "test-agent",
-		UserID:    "user-1",
-		ImageID:   "img-456",
-	})
-	if err != nil {
-		t.Fatalf("submit failed: %v", err)
-	}
-	if task.Type != "image_generation" {
-		t.Errorf("expected image_generation type, got %s", task.Type)
+		t.Fatal(err)
 	}
 
 	// Wait for execution
@@ -222,16 +197,8 @@ func TestSubmitImageTaskWithMockGen(t *testing.T) {
 			t.Fatal("task not found")
 		}
 		if got.Status == StatusCompleted {
-			if got.ArtifactID != "img-456" {
-				t.Errorf("expected artifact_id img-456, got %s", got.ArtifactID)
-			}
-			// Verify image was saved
-			data, err := imgStore.Load("img-456")
-			if err != nil {
-				t.Fatalf("failed to load saved image: %v", err)
-			}
-			if string(data) != "fake-png-data" {
-				t.Errorf("image data mismatch")
+			if got.Summary != "mock completed" {
+				t.Errorf("expected summary 'mock completed', got %q", got.Summary)
 			}
 			return
 		}
@@ -240,15 +207,43 @@ func TestSubmitImageTaskWithMockGen(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Error("image task did not complete in time")
+	t.Error("task did not complete in time")
 }
 
-type mockImageGen struct {
-	data []byte
+func TestSubmitUnregisteredWorker(t *testing.T) {
+	store := newMemoryStore()
+	executor := NewExecutor("claude", "/tmp", "test", store)
+	defer executor.Shutdown()
+
+	params, _ := json.Marshal(map[string]string{})
+	task, err := executor.SubmitTask("unknown_type", "test", "agent", "user", "", params)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for failure
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		got, ok := executor.Get(task.ID)
+		if !ok {
+			t.Fatal("task not found")
+		}
+		if got.Status == StatusFailed {
+			if !contains(got.Error, "no worker registered") {
+				t.Errorf("expected 'no worker registered' error, got %q", got.Error)
+			}
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Error("task did not fail in time")
 }
 
-func (m *mockImageGen) GenerateImage(_ context.Context, _ string, _ []byte) ([]byte, error) {
-	return m.data, nil
+type mockWorker struct{}
+
+func (w *mockWorker) Execute(_ context.Context, task *Task, _ json.RawMessage) error {
+	task.Summary = "mock completed"
+	return nil
 }
 
 func TestGetNonexistent(t *testing.T) {
@@ -265,7 +260,6 @@ func TestGetNonexistent(t *testing.T) {
 func TestMemoryStoreListByAgent(t *testing.T) {
 	store := newMemoryStore()
 
-	// Save tasks directly to the store
 	tasks := []Task{
 		{ID: "1", Type: "claude_session", Status: StatusCompleted, Description: "task 1", RequestedBy: "agent-a", CreatedAt: time.Now().Add(-2 * time.Hour)},
 		{ID: "2", Type: "claude_session", Status: StatusRunning, Description: "task 2", RequestedBy: "agent-a", CreatedAt: time.Now().Add(-1 * time.Hour)},
@@ -282,12 +276,10 @@ func TestMemoryStoreListByAgent(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("expected 2 tasks for agent-a, got %d", len(results))
 	}
-	// Should be newest first
 	if results[0].ID != "2" {
 		t.Errorf("expected task 2 first (newest), got %s", results[0].ID)
 	}
 
-	// Test pagination
 	results, err = store.ListByAgent(nil, "agent-a", 1, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -376,3 +368,6 @@ func containsSubstr(s, substr string) bool {
 	}
 	return false
 }
+
+// Ensure the test uses the right import for unused variable check
+var _ = fmt.Sprintf

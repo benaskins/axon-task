@@ -3,7 +3,7 @@ package task
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -15,10 +15,6 @@ import (
 
 	"github.com/google/uuid"
 )
-
-func base64Decode(s string) ([]byte, error) {
-	return base64.StdEncoding.DecodeString(s)
-}
 
 type TaskStatus string
 
@@ -49,43 +45,34 @@ type Task struct {
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
-// ImageTaskParams holds the parameters specific to image generation tasks.
-// Sent as part of the task submission, not persisted.
-type ImageTaskParams struct {
-	Prompt         string `json:"prompt"`
-	ReferenceImage string `json:"reference_image,omitempty"` // base64-encoded PNG
-	AgentSlug      string `json:"agent_slug"`
-	UserID         string `json:"user_id"`
-	ConversationID string `json:"conversation_id,omitempty"`
-	ImageID        string `json:"image_id"` // pre-assigned by chat service
-	Private        bool   `json:"private,omitempty"`
+// Worker executes a task. Domain packages implement this interface.
+// The params argument contains the JSON-encoded task-specific parameters.
+// Workers may update the task's Summary and ArtifactID fields.
+type Worker interface {
+	Execute(ctx context.Context, task *Task, params json.RawMessage) error
 }
 
-// imageTask pairs a task with its image-specific parameters (not persisted).
-type imageTask struct {
+type queuedTask struct {
 	task   *Task
-	params *ImageTaskParams
+	params json.RawMessage
 }
 
 type Executor struct {
+	store   Store
+	workers map[string]Worker
+	mu      sync.RWMutex
+
+	// Claude session config (built-in worker)
 	claudePath string
 	repoPath   string
 	model      string
-	store      Store
 
 	// PromptBuilder builds the prompt sent to Claude for a task.
 	// If nil, DefaultPromptBuilder is used.
 	PromptBuilder func(description string) string
 
-	// Image generation dependencies (nil if not configured)
-	imageMu         sync.RWMutex
-	imageGen        ImageGenerator
-	privateImageGen ImageGenerator
-	imageStore      *ImageStore
-
-	queue      chan *Task
-	imageQueue chan imageTask
-	done       chan struct{}
+	queue chan queuedTask
+	done  chan struct{}
 }
 
 func NewExecutor(claudePath, repoPath, model string, store Store) *Executor {
@@ -94,33 +81,41 @@ func NewExecutor(claudePath, repoPath, model string, store Store) *Executor {
 		repoPath:   repoPath,
 		model:      model,
 		store:      store,
-		queue:      make(chan *Task, MaxQueueSize),
-		imageQueue: make(chan imageTask, MaxQueueSize),
+		workers:    make(map[string]Worker),
+		queue:      make(chan queuedTask, MaxQueueSize),
 		done:       make(chan struct{}),
 	}
 	go e.worker()
-	go e.imageWorker()
 	return e
 }
 
-// SetImageGen configures image generation support.
-func (e *Executor) SetImageGen(gen ImageGenerator, imgStore *ImageStore) {
-	e.imageMu.Lock()
-	defer e.imageMu.Unlock()
-	e.imageGen = gen
-	e.imageStore = imgStore
+// RegisterWorker registers a worker for a given task type.
+func (e *Executor) RegisterWorker(taskType string, w Worker) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.workers[taskType] = w
 }
 
-func (e *Executor) SetPrivateImageGen(gen ImageGenerator) {
-	e.imageMu.Lock()
-	defer e.imageMu.Unlock()
-	e.privateImageGen = gen
-}
-
+// Submit submits a Claude session task (convenience method).
 func (e *Executor) Submit(description, requestedBy, username string) (*Task, error) {
+	params := ClaudeSessionParams{
+		Description: description,
+		RequestedBy: requestedBy,
+		Username:    username,
+	}
+	raw, _ := json.Marshal(params)
+	return e.SubmitTask("claude_session", description, requestedBy, username, "", raw)
+}
+
+// SubmitTask submits a task of any registered type.
+func (e *Executor) SubmitTask(taskType, description, requestedBy, username, taskID string, params json.RawMessage) (*Task, error) {
+	if taskID == "" {
+		taskID = uuid.New().String()
+	}
+
 	task := &Task{
-		ID:          uuid.New().String(),
-		Type:        "claude_session",
+		ID:          taskID,
+		Type:        taskType,
 		Status:      StatusQueued,
 		Description: description,
 		RequestedBy: requestedBy,
@@ -134,7 +129,7 @@ func (e *Executor) Submit(description, requestedBy, username string) (*Task, err
 
 	snapshot := *task
 	select {
-	case e.queue <- task:
+	case e.queue <- queuedTask{task: task, params: params}:
 		return &snapshot, nil
 	default:
 		task.Status = StatusFailed
@@ -143,43 +138,6 @@ func (e *Executor) Submit(description, requestedBy, username string) (*Task, err
 			slog.Error("failed to persist queue-full status", "task_id", task.ID, "error", err)
 		}
 		return nil, fmt.Errorf("task queue full (max %d)", MaxQueueSize)
-	}
-}
-
-// SubmitImageTask submits an image generation task.
-func (e *Executor) SubmitImageTask(params *ImageTaskParams) (*Task, error) {
-	e.imageMu.RLock()
-	configured := e.imageGen != nil
-	e.imageMu.RUnlock()
-	if !configured {
-		return nil, fmt.Errorf("image generation not configured")
-	}
-
-	task := &Task{
-		ID:          params.ImageID,
-		Type:        "image_generation",
-		Status:      StatusQueued,
-		Description: params.Prompt,
-		RequestedBy: params.AgentSlug,
-		Username:    params.UserID,
-		CreatedAt:   time.Now(),
-	}
-
-	if err := e.store.Save(context.Background(), task); err != nil {
-		return nil, fmt.Errorf("persist task: %w", err)
-	}
-
-	snapshot := *task
-	select {
-	case e.imageQueue <- imageTask{task: task, params: params}:
-		return &snapshot, nil
-	default:
-		task.Status = StatusFailed
-		task.Error = "image queue full"
-		if err := e.store.Save(context.Background(), task); err != nil {
-			slog.Error("failed to persist queue-full status", "task_id", task.ID, "error", err)
-		}
-		return nil, fmt.Errorf("image task queue full (max %d)", MaxQueueSize)
 	}
 }
 
@@ -195,7 +153,7 @@ func (e *Executor) Get(id string) (*Task, bool) {
 	return task, true
 }
 
-// Store returns the executor's underlying store for direct access (e.g. ListByAgent).
+// Store returns the executor's underlying store for direct access.
 func (e *Executor) Store() Store {
 	return e.store
 }
@@ -207,26 +165,15 @@ func (e *Executor) Shutdown() {
 func (e *Executor) worker() {
 	for {
 		select {
-		case task := <-e.queue:
-			e.execute(task)
+		case qt := <-e.queue:
+			e.execute(qt.task, qt.params)
 		case <-e.done:
 			return
 		}
 	}
 }
 
-func (e *Executor) imageWorker() {
-	for {
-		select {
-		case it := <-e.imageQueue:
-			e.executeImage(it.task, it.params)
-		case <-e.done:
-			return
-		}
-	}
-}
-
-func (e *Executor) execute(task *Task) {
+func (e *Executor) execute(task *Task, params json.RawMessage) {
 	now := time.Now()
 	task.Status = StatusRunning
 	task.StartedAt = &now
@@ -234,31 +181,33 @@ func (e *Executor) execute(task *Task) {
 		slog.Error("failed to persist running status", "task_id", task.ID, "error", err)
 	}
 
-	slog.Info("executing task", "task_id", task.ID, "description", task.Description)
-
-	pb := e.PromptBuilder
-	if pb == nil {
-		pb = DefaultPromptBuilder
-	}
-	prompt := pb(task.Description)
+	slog.Info("executing task", "task_id", task.ID, "type", task.Type, "description", task.Description)
 
 	ctx, cancel := context.WithTimeout(context.Background(), TaskTimeout)
 	defer cancel()
 
-	output, err := e.runClaude(ctx, task, prompt)
-	completed := time.Now()
+	var err error
+	if task.Type == "claude_session" {
+		err = e.executeClaude(ctx, task, params)
+	} else {
+		e.mu.RLock()
+		w, ok := e.workers[task.Type]
+		e.mu.RUnlock()
+		if !ok {
+			err = fmt.Errorf("no worker registered for task type %q", task.Type)
+		} else {
+			err = w.Execute(ctx, task, params)
+		}
+	}
 
+	completed := time.Now()
 	task.CompletedAt = &completed
 	if err != nil {
 		task.Status = StatusFailed
 		task.Error = err.Error()
-		if output != "" {
-			task.Summary = truncate(output, 2000)
-		}
 		slog.Error("task failed", "task_id", task.ID, "error", err)
 	} else {
 		task.Status = StatusCompleted
-		task.Summary = truncate(output, 2000)
 		slog.Info("task completed", "task_id", task.ID)
 	}
 
@@ -267,79 +216,22 @@ func (e *Executor) execute(task *Task) {
 	}
 }
 
-const imageTimeout = 5 * time.Minute
-
-func (e *Executor) executeImage(task *Task, params *ImageTaskParams) {
-	now := time.Now()
-	task.Status = StatusRunning
-	task.StartedAt = &now
-	if err := e.store.Save(context.Background(), task); err != nil {
-		slog.Error("failed to persist running status", "task_id", task.ID, "error", err)
+func (e *Executor) executeClaude(ctx context.Context, task *Task, params json.RawMessage) error {
+	pb := e.PromptBuilder
+	if pb == nil {
+		pb = DefaultPromptBuilder
 	}
+	prompt := pb(task.Description)
 
-	slog.Info("generating image", "task_id", task.ID, "prompt_len", len(params.Prompt), "has_reference", params.ReferenceImage != "")
-
-	ctx, cancel := context.WithTimeout(context.Background(), imageTimeout)
-	defer cancel()
-
-	// Decode reference image if provided
-	var refImage []byte
-	if params.ReferenceImage != "" {
-		decoded, err := base64Decode(params.ReferenceImage)
-		if err != nil {
-			slog.Warn("failed to decode reference image, continuing without", "error", err)
-		} else {
-			refImage = decoded
-		}
-	}
-
-	e.imageMu.RLock()
-	gen := e.imageGen
-	if params.Private && e.privateImageGen != nil {
-		gen = e.privateImageGen
-	}
-	imgStore := e.imageStore
-	e.imageMu.RUnlock()
-
-	if gen == nil {
-		task.Status = StatusFailed
-		task.Error = "image generator not configured"
-		completed := time.Now()
-		task.CompletedAt = &completed
-		if err := e.store.Save(context.Background(), task); err != nil {
-			slog.Error("failed to persist image task result", "task_id", task.ID, "error", err)
-		}
-		return
-	}
-
-	imageData, err := gen.GenerateImage(ctx, params.Prompt, refImage)
-	completed := time.Now()
-	task.CompletedAt = &completed
-
+	output, err := e.runClaude(ctx, task, prompt)
 	if err != nil {
-		task.Status = StatusFailed
-		task.Error = err.Error()
-		slog.Error("image generation failed", "task_id", task.ID, "error", err)
-	} else {
-		if imgStore == nil {
-			task.Status = StatusFailed
-			task.Error = "image store not configured"
-			slog.Error("image store not configured", "task_id", task.ID)
-		} else if err := imgStore.SaveWithID(params.ImageID, imageData); err != nil {
-			task.Status = StatusFailed
-			task.Error = fmt.Sprintf("failed to save image: %v", err)
-			slog.Error("failed to save image", "task_id", task.ID, "error", err)
-		} else {
-			task.Status = StatusCompleted
-			task.ArtifactID = params.ImageID
-			task.Summary = fmt.Sprintf("Generated image: %s", params.ImageID)
-			slog.Info("image generated", "task_id", task.ID, "image_id", params.ImageID)
+		if output != "" {
+			task.Summary = truncate(output, 2000)
 		}
+		return err
 	}
-
-	if err := e.store.Save(context.Background(), task); err != nil {
-		slog.Error("failed to persist image task result", "task_id", task.ID, "error", err)
-	}
+	task.Summary = truncate(output, 2000)
+	return nil
 }
 
 func (e *Executor) runClaude(ctx context.Context, task *Task, prompt string) (string, error) {
@@ -431,7 +323,6 @@ func sanitizeName(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, " ", "-")
 	s = strings.ReplaceAll(s, "_", "-")
-	// Keep only alphanumeric and hyphens
 	var b strings.Builder
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {

@@ -12,8 +12,8 @@ import (
 )
 
 type SubmitRequest struct {
-	Type   string          `json:"type"`   // "claude_session" | "image_generation"
-	Params json.RawMessage `json:"params"` // type-specific payload
+	Type   string          `json:"type"`
+	Params json.RawMessage `json:"params"`
 }
 
 type ClaudeSessionParams struct {
@@ -52,10 +52,8 @@ func (h *TaskHandler) SubmitTask(w http.ResponseWriter, r *http.Request) {
 	switch req.Type {
 	case "claude_session":
 		h.submitClaudeSession(w, req.Params, clientCN)
-	case "image_generation":
-		h.submitImageGeneration(w, req.Params, clientCN)
 	default:
-		axon.WriteError(w, http.StatusBadRequest, "type must be \"claude_session\" or \"image_generation\"")
+		h.submitGeneric(w, req.Type, req.Params, clientCN)
 	}
 }
 
@@ -104,37 +102,24 @@ func (h *TaskHandler) submitClaudeSession(w http.ResponseWriter, raw json.RawMes
 	})
 }
 
-func (h *TaskHandler) submitImageGeneration(w http.ResponseWriter, raw json.RawMessage, clientCN string) {
-	var params ImageTaskParams
-	if err := json.Unmarshal(raw, &params); err != nil {
-		axon.WriteError(w, http.StatusBadRequest, "invalid params for image_generation")
+func (h *TaskHandler) submitGeneric(w http.ResponseWriter, taskType string, raw json.RawMessage, clientCN string) {
+	h.executor.mu.RLock()
+	_, ok := h.executor.workers[taskType]
+	h.executor.mu.RUnlock()
+
+	if !ok {
+		axon.WriteError(w, http.StatusBadRequest, "unknown task type: "+taskType)
 		return
 	}
 
-	if params.Prompt == "" {
-		axon.WriteError(w, http.StatusBadRequest, "prompt is required")
-		return
-	}
-	if params.AgentSlug == "" {
-		axon.WriteError(w, http.StatusBadRequest, "agent_slug is required")
-		return
-	}
-	if params.ImageID == "" {
-		axon.WriteError(w, http.StatusBadRequest, "image_id is required")
-		return
-	}
-
-	slog.Info("image task submitted",
-		"type", "image_generation",
-		"agent_slug", params.AgentSlug,
-		"image_id", params.ImageID,
-		"prompt_len", len(params.Prompt),
+	slog.Info("task submitted",
+		"type", taskType,
 		"client_cn", clientCN,
 	)
 
-	task, err := h.executor.SubmitImageTask(&params)
+	task, err := h.executor.SubmitTask(taskType, "", "", "", "", raw)
 	if err != nil {
-		slog.Error("failed to submit image task", "error", err, "agent_slug", params.AgentSlug, "client_cn", clientCN)
+		slog.Error("failed to submit task", "error", err, "type", taskType, "client_cn", clientCN)
 		axon.WriteError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}

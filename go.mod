@@ -7,7 +7,6 @@ require github.com/benaskins/axon v0.3.0
 require (
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.11.2
-	golang.org/x/image v0.36.0
 )
 
 require (
