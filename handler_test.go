@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -150,15 +152,35 @@ func TestListTasks_DefaultLimitAndOffset(t *testing.T) {
 }
 
 func TestListTasks_ClampsLimitTo100(t *testing.T) {
-	h, _ := newTestHandler(t)
+	h, store := newTestHandler(t)
 
-	// Request limit=200 — should be ignored (stays at default 50)
-	req := httptest.NewRequest("GET", "/tasks?agent=test&limit=200", nil)
+	// Create 60 tasks so we can distinguish default-50 from unclamped-200
+	for i := 0; i < 60; i++ {
+		task := &Task{
+			ID:          fmt.Sprintf("clamp-%d", i),
+			Type:        "test",
+			Status:      StatusCompleted,
+			RequestedBy: "clamp-agent",
+			CreatedAt:   time.Now().Add(time.Duration(-i) * time.Minute),
+		}
+		store.Save(context.Background(), task)
+	}
+
+	// Request limit=200 — invalid (>100), so handler ignores it and uses default 50
+	req := httptest.NewRequest("GET", "/tasks?agent=clamp-agent&limit=200", nil)
 	rec := httptest.NewRecorder()
 	h.ListTasks(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var tasks []Task
+	if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 50 {
+		t.Errorf("limit=200 should fall back to default 50, got %d tasks", len(tasks))
 	}
 }
 
@@ -350,30 +372,55 @@ func TestSubmitClaudeSession_MissingUsername(t *testing.T) {
 	}
 }
 
-func TestSubmitClaudeSession_InvalidUsername(t *testing.T) {
+func TestSubmitClaudeSession_UsernameValidation(t *testing.T) {
 	h, _ := newTestHandler(t)
 
-	body, _ := json.Marshal(SubmitRequest{
-		Type: "claude_session",
-		Params: json.RawMessage(`{
-			"description": "fix the bug",
-			"requested_by": "test-agent",
-			"username": "INVALID_USER"
-		}`),
-	})
-	req := httptest.NewRequest("POST", "/tasks", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	h.SubmitTask(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	// ValidSlug regex: ^[a-z0-9]+(-[a-z0-9]+)*$
+	cases := []struct {
+		name     string
+		username string
+		wantOK   bool
+	}{
+		{"uppercase", "INVALID_USER", false},
+		{"empty", "", false},                                     // caught by empty check before regex
+		{"with-at-sign", "user@domain", false},                   // @ not in [a-z0-9-]
+		{"with-space", "user name", false},                       // space not in [a-z0-9-]
+		{"with-underscore", "user_name", false},                  // underscore not in [a-z0-9-]
+		{"leading-hyphen", "-leading", false},                    // must start with [a-z0-9]
+		{"trailing-hyphen", "trailing-", false},                  // must end with [a-z0-9]
+		{"double-hyphen", "double--hyphen", false},               // consecutive hyphens not allowed
+		{"very-long", strings.Repeat("a", 300), true},            // regex has no length limit
+		{"valid-simple", "ben", true},                            // simple lowercase
+		{"valid-with-hyphens", "my-agent-v2", true},              // hyphens between words
+		{"valid-with-numbers", "agent42", true},                  // digits allowed
+		{"valid-hyphen-and-numbers", "task-runner-3", true},      // mixed
 	}
 
-	var resp map[string]string
-	json.NewDecoder(rec.Body).Decode(&resp)
-	if !contains(resp["error"], "username") {
-		t.Errorf("expected username validation error, got %q", resp["error"])
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(SubmitRequest{
+				Type: "claude_session",
+				Params: json.RawMessage(fmt.Sprintf(`{
+					"description": "fix the bug",
+					"requested_by": "test-agent",
+					"username": %q
+				}`, tc.username)),
+			})
+			req := httptest.NewRequest("POST", "/tasks", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			h.SubmitTask(rec, req)
+
+			if tc.wantOK {
+				if rec.Code != http.StatusAccepted {
+					t.Errorf("username %q: expected 202, got %d: %s", tc.username, rec.Code, rec.Body.String())
+				}
+			} else {
+				if rec.Code != http.StatusBadRequest {
+					t.Errorf("username %q: expected 400, got %d: %s", tc.username, rec.Code, rec.Body.String())
+				}
+			}
+		})
 	}
 }
 
