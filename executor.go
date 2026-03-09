@@ -89,6 +89,11 @@ func NewExecutor(claudePath, repoPath, model string, store Store) *Executor {
 		queue:      make(chan queuedTask, MaxQueueSize),
 		done:       make(chan struct{}),
 	}
+
+	// Default to in-memory event store with task projector.
+	projector := NewTaskProjector(store, store)
+	e.EventStore = fact.NewMemoryStore(fact.WithProjector(projector))
+
 	go e.worker()
 	return e
 }
@@ -117,6 +122,7 @@ func (e *Executor) SubmitTask(taskType, description, requestedBy, username, task
 		taskID = uuid.New().String()
 	}
 
+	now := time.Now()
 	task := &Task{
 		ID:          taskID,
 		Type:        taskType,
@@ -124,30 +130,33 @@ func (e *Executor) SubmitTask(taskType, description, requestedBy, username, task
 		Description: description,
 		RequestedBy: requestedBy,
 		Username:    username,
-		CreatedAt:   time.Now(),
+		CreatedAt:   now,
 	}
 
-	if err := e.store.Save(context.Background(), task); err != nil {
-		return nil, fmt.Errorf("persist task: %w", err)
-	}
-
-	emit(context.Background(), e.EventStore, task.ID, TaskSubmitted{
+	// Emit task.submitted — projector creates the task in the read model
+	if err := emit(context.Background(), e.EventStore, task.ID, TaskSubmitted{
 		TaskID:      task.ID,
 		Type:        task.Type,
 		Description: task.Description,
 		RequestedBy: task.RequestedBy,
 		Username:    task.Username,
-	})
+		CreatedAt:   now,
+	}); err != nil {
+		return nil, fmt.Errorf("emit task.submitted: %w", err)
+	}
 
 	snapshot := *task
 	select {
 	case e.queue <- queuedTask{task: task, params: params}:
 		return &snapshot, nil
 	default:
-		task.Status = StatusFailed
-		task.Error = "queue full"
-		if err := e.store.Save(context.Background(), task); err != nil {
-			slog.Error("failed to persist queue-full status", "task_id", task.ID, "error", err)
+		completed := time.Now()
+		if err := emit(context.Background(), e.EventStore, task.ID, TaskFailed{
+			TaskID:      task.ID,
+			Error:       "queue full",
+			CompletedAt: completed,
+		}); err != nil {
+			slog.Error("failed to emit task.failed for queue-full", "task_id", task.ID, "error", err)
 		}
 		return nil, fmt.Errorf("task queue full (max %d)", MaxQueueSize)
 	}
@@ -202,16 +211,14 @@ func (e *Executor) worker() {
 
 func (e *Executor) execute(task *Task, params json.RawMessage) {
 	now := time.Now()
-	task.Status = StatusRunning
 	task.StartedAt = &now
-	if err := e.store.Save(context.Background(), task); err != nil {
-		slog.Error("failed to persist running status", "task_id", task.ID, "error", err)
-	}
 
-	emit(context.Background(), e.EventStore, task.ID, TaskStarted{
+	if err := emit(context.Background(), e.EventStore, task.ID, TaskStarted{
 		TaskID:    task.ID,
 		StartedAt: now,
-	})
+	}); err != nil {
+		slog.Error("failed to emit task.started", "task_id", task.ID, "error", err)
+	}
 
 	slog.Info("executing task", "task_id", task.ID, "type", task.Type, "description", task.Description)
 
@@ -233,37 +240,34 @@ func (e *Executor) execute(task *Task, params json.RawMessage) {
 	}
 
 	completed := time.Now()
-	task.CompletedAt = &completed
 	durationMs := completed.Sub(*task.StartedAt).Milliseconds()
 
 	if err != nil {
 		task.Status = StatusFailed
 		task.Error = err.Error()
 		slog.Error("task failed", "task_id", task.ID, "error", err)
+
+		if emitErr := emit(context.Background(), e.EventStore, task.ID, TaskFailed{
+			TaskID:      task.ID,
+			Error:       task.Error,
+			CompletedAt: completed,
+			DurationMs:  durationMs,
+		}); emitErr != nil {
+			slog.Error("failed to emit task.failed", "task_id", task.ID, "error", emitErr)
+		}
 	} else {
 		task.Status = StatusCompleted
 		slog.Info("task completed", "task_id", task.ID)
-	}
 
-	if err := e.store.Save(context.Background(), task); err != nil {
-		slog.Error("failed to persist task result", "task_id", task.ID, "error", err)
-	}
-
-	if task.Status == StatusCompleted {
-		emit(context.Background(), e.EventStore, task.ID, TaskCompleted{
+		if emitErr := emit(context.Background(), e.EventStore, task.ID, TaskCompleted{
 			TaskID:      task.ID,
 			Summary:     task.Summary,
 			ArtifactID:  task.ArtifactID,
 			CompletedAt: completed,
 			DurationMs:  durationMs,
-		})
-	} else {
-		emit(context.Background(), e.EventStore, task.ID, TaskFailed{
-			TaskID:      task.ID,
-			Error:       task.Error,
-			CompletedAt: completed,
-			DurationMs:  durationMs,
-		})
+		}); emitErr != nil {
+			slog.Error("failed to emit task.completed", "task_id", task.ID, "error", emitErr)
+		}
 	}
 }
 

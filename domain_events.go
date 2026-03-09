@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"log/slog"
 	"time"
 
 	fact "github.com/benaskins/axon-fact"
@@ -40,30 +39,28 @@ func taskStream(taskID string) string {
 	return "task-" + taskID
 }
 
-// emit appends a domain event to the event store. If es is nil, it's a no-op.
-func emit(ctx context.Context, es fact.EventStore, taskID string, data EventTyper) {
+// emit appends a domain event to the event store. Returns nil if es is nil (no-op).
+func emit(ctx context.Context, es fact.EventStore, taskID string, data EventTyper) error {
 	if es == nil {
-		return
+		return nil
 	}
 	stream := taskStream(taskID)
 	ev, err := newEvent(stream, data)
 	if err != nil {
-		slog.Warn("failed to create domain event", "type", data.EventType(), "error", err)
-		return
+		return err
 	}
-	if err := es.Append(ctx, stream, []fact.Event{ev}); err != nil {
-		slog.Warn("failed to emit domain event", "type", data.EventType(), "error", err)
-	}
+	return es.Append(ctx, stream, []fact.Event{ev})
 }
 
 // Task events
 
 type TaskSubmitted struct {
-	TaskID      string `json:"task_id"`
-	Type        string `json:"type"`
-	Description string `json:"description"`
-	RequestedBy string `json:"requested_by,omitempty"`
-	Username    string `json:"username,omitempty"`
+	TaskID      string    `json:"task_id"`
+	Type        string    `json:"type"`
+	Description string    `json:"description"`
+	RequestedBy string    `json:"requested_by,omitempty"`
+	Username    string    `json:"username,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 func (e TaskSubmitted) EventType() string { return "task.submitted" }

@@ -5,16 +5,13 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
-
-	fact "github.com/benaskins/axon-fact"
 )
 
 func TestExecutor_EmitsTaskLifecycleEvents(t *testing.T) {
 	store := newMemoryStore()
-	es := fact.NewMemoryStore()
 
 	executor := NewExecutor("claude", "/tmp", "test", store)
-	executor.EventStore = es
+	es := executor.EventStore // auto-defaulted with projectors
 	executor.RegisterWorker("test_type", &mockWorker{})
 	defer executor.Shutdown()
 
@@ -74,14 +71,22 @@ func TestExecutor_EmitsTaskLifecycleEvents(t *testing.T) {
 	if comp.DurationMs < 0 {
 		t.Errorf("expected non-negative duration, got %d", comp.DurationMs)
 	}
+
+	// Verify projectors updated the read model
+	got, ok := executor.Get(submitted.ID)
+	if !ok {
+		t.Fatal("task should exist in read model")
+	}
+	if got.Status != StatusCompleted {
+		t.Errorf("expected completed status in read model, got %s", got.Status)
+	}
 }
 
 func TestExecutor_EmitsTaskFailedEvent(t *testing.T) {
 	store := newMemoryStore()
-	es := fact.NewMemoryStore()
 
 	executor := NewExecutor("claude", "/tmp", "test", store)
-	executor.EventStore = es
+	es := executor.EventStore
 	// No worker registered — task will fail
 	defer executor.Shutdown()
 
@@ -124,19 +129,30 @@ func TestExecutor_EmitsTaskFailedEvent(t *testing.T) {
 	}
 }
 
-func TestExecutor_NoEventsWithoutEventStore(t *testing.T) {
+func TestExecutor_AutoDefaultsEventStore(t *testing.T) {
 	store := newMemoryStore()
 
 	executor := NewExecutor("claude", "/tmp", "test", store)
-	executor.RegisterWorker("test_type", &mockWorker{})
-	// EventStore deliberately nil
 	defer executor.Shutdown()
 
+	if executor.EventStore == nil {
+		t.Fatal("EventStore should be auto-defaulted")
+	}
+
+	// Verify projectors are wired — submit a task and check the read model
+	executor.RegisterWorker("test_type", &mockWorker{})
 	params, _ := json.Marshal(map[string]string{})
-	_, err := executor.SubmitTask("test_type", "no events", "agent-a", "ben", "", params)
+	submitted, err := executor.SubmitTask("test_type", "auto-default test", "agent-a", "ben", "", params)
 	if err != nil {
 		t.Fatalf("submit failed: %v", err)
 	}
 
-	// No panic, no error — events are silently skipped
+	// Task should be immediately visible in the read model (created by projector)
+	got, ok := executor.Get(submitted.ID)
+	if !ok {
+		t.Fatal("task should exist in read model after submit")
+	}
+	if got.Status != StatusQueued {
+		t.Errorf("expected queued status, got %s", got.Status)
+	}
 }
