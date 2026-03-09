@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	fact "github.com/benaskins/axon-fact"
 	"github.com/google/uuid"
 )
 
@@ -71,6 +72,9 @@ type Executor struct {
 	// If nil, DefaultPromptBuilder is used.
 	PromptBuilder func(description string) string
 
+	// EventStore records domain events. Optional.
+	EventStore fact.EventStore
+
 	queue chan queuedTask
 	done  chan struct{}
 }
@@ -127,6 +131,14 @@ func (e *Executor) SubmitTask(taskType, description, requestedBy, username, task
 		return nil, fmt.Errorf("persist task: %w", err)
 	}
 
+	emit(context.Background(), e.EventStore, task.ID, TaskSubmitted{
+		TaskID:      task.ID,
+		Type:        task.Type,
+		Description: task.Description,
+		RequestedBy: task.RequestedBy,
+		Username:    task.Username,
+	})
+
 	snapshot := *task
 	select {
 	case e.queue <- queuedTask{task: task, params: params}:
@@ -181,6 +193,11 @@ func (e *Executor) execute(task *Task, params json.RawMessage) {
 		slog.Error("failed to persist running status", "task_id", task.ID, "error", err)
 	}
 
+	emit(context.Background(), e.EventStore, task.ID, TaskStarted{
+		TaskID:    task.ID,
+		StartedAt: now,
+	})
+
 	slog.Info("executing task", "task_id", task.ID, "type", task.Type, "description", task.Description)
 
 	ctx, cancel := context.WithTimeout(context.Background(), TaskTimeout)
@@ -202,6 +219,8 @@ func (e *Executor) execute(task *Task, params json.RawMessage) {
 
 	completed := time.Now()
 	task.CompletedAt = &completed
+	durationMs := completed.Sub(*task.StartedAt).Milliseconds()
+
 	if err != nil {
 		task.Status = StatusFailed
 		task.Error = err.Error()
@@ -213,6 +232,23 @@ func (e *Executor) execute(task *Task, params json.RawMessage) {
 
 	if err := e.store.Save(context.Background(), task); err != nil {
 		slog.Error("failed to persist task result", "task_id", task.ID, "error", err)
+	}
+
+	if task.Status == StatusCompleted {
+		emit(context.Background(), e.EventStore, task.ID, TaskCompleted{
+			TaskID:      task.ID,
+			Summary:     task.Summary,
+			ArtifactID:  task.ArtifactID,
+			CompletedAt: completed,
+			DurationMs:  durationMs,
+		})
+	} else {
+		emit(context.Background(), e.EventStore, task.ID, TaskFailed{
+			TaskID:      task.ID,
+			Error:       task.Error,
+			CompletedAt: completed,
+			DurationMs:  durationMs,
+		})
 	}
 }
 
