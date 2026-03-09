@@ -1,6 +1,6 @@
 module github.com/benaskins/axon-task
 
-go 1.24.1
+go 1.26.0
 
 require github.com/benaskins/axon v0.3.0
 
