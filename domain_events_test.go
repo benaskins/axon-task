@@ -11,7 +11,7 @@ func TestExecutor_EmitsTaskLifecycleEvents(t *testing.T) {
 	store := newMemoryStore()
 
 	executor := NewExecutor("claude", "/tmp", "test", store)
-	es := executor.EventStore // auto-defaulted with projectors
+	es := executor.eventStore // auto-defaulted with projectors
 	executor.RegisterWorker("test_type", &mockWorker{})
 	defer executor.Shutdown()
 
@@ -86,7 +86,7 @@ func TestExecutor_EmitsTaskFailedEvent(t *testing.T) {
 	store := newMemoryStore()
 
 	executor := NewExecutor("claude", "/tmp", "test", store)
-	es := executor.EventStore
+	es := executor.eventStore
 	// No worker registered — task will fail
 	defer executor.Shutdown()
 
@@ -135,7 +135,7 @@ func TestExecutor_AutoDefaultsEventStore(t *testing.T) {
 	executor := NewExecutor("claude", "/tmp", "test", store)
 	defer executor.Shutdown()
 
-	if executor.EventStore == nil {
+	if executor.eventStore == nil {
 		t.Fatal("EventStore should be auto-defaulted")
 	}
 

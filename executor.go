@@ -68,18 +68,18 @@ type Executor struct {
 	repoPath   string
 	model      string
 
-	// PromptBuilder builds the prompt sent to Claude for a task.
+	// promptBuilder builds the prompt sent to Claude for a task.
 	// If nil, DefaultPromptBuilder is used.
-	PromptBuilder func(description string) string
+	promptBuilder func(description string) string
 
-	// EventStore records domain events. Optional.
-	EventStore fact.EventStore
+	// eventStore records domain events.
+	eventStore fact.EventStore
 
 	queue chan queuedTask
 	done  chan struct{}
 }
 
-func NewExecutor(claudePath, repoPath, model string, store Store) *Executor {
+func NewExecutor(claudePath, repoPath, model string, store Store, opts ...Option) *Executor {
 	e := &Executor{
 		claudePath: claudePath,
 		repoPath:   repoPath,
@@ -90,9 +90,15 @@ func NewExecutor(claudePath, repoPath, model string, store Store) *Executor {
 		done:       make(chan struct{}),
 	}
 
+	for _, opt := range opts {
+		opt(e)
+	}
+
 	// Default to in-memory event store with task projector.
-	projector := NewTaskProjector(store, store)
-	e.EventStore = fact.NewMemoryStore(fact.WithProjector(projector))
+	if e.eventStore == nil {
+		projector := NewTaskProjector(store, store)
+		e.eventStore = fact.NewMemoryStore(fact.WithProjector(projector))
+	}
 
 	go e.worker()
 	return e
@@ -134,7 +140,7 @@ func (e *Executor) SubmitTask(taskType, description, requestedBy, username, task
 	}
 
 	// Emit task.submitted — projector creates the task in the read model
-	if err := emit(context.Background(), e.EventStore, task.ID, TaskSubmitted{
+	if err := emit(context.Background(), e.eventStore, task.ID, TaskSubmitted{
 		TaskID:      task.ID,
 		Type:        task.Type,
 		Description: task.Description,
@@ -151,7 +157,7 @@ func (e *Executor) SubmitTask(taskType, description, requestedBy, username, task
 		return &snapshot, nil
 	default:
 		completed := time.Now()
-		if err := emit(context.Background(), e.EventStore, task.ID, TaskFailed{
+		if err := emit(context.Background(), e.eventStore, task.ID, TaskFailed{
 			TaskID:      task.ID,
 			Error:       "queue full",
 			CompletedAt: completed,
@@ -213,7 +219,7 @@ func (e *Executor) execute(task *Task, params json.RawMessage) {
 	now := time.Now()
 	task.StartedAt = &now
 
-	if err := emit(context.Background(), e.EventStore, task.ID, TaskStarted{
+	if err := emit(context.Background(), e.eventStore, task.ID, TaskStarted{
 		TaskID:    task.ID,
 		StartedAt: now,
 	}); err != nil {
@@ -247,7 +253,7 @@ func (e *Executor) execute(task *Task, params json.RawMessage) {
 		task.Error = err.Error()
 		slog.Error("task failed", "task_id", task.ID, "error", err)
 
-		if emitErr := emit(context.Background(), e.EventStore, task.ID, TaskFailed{
+		if emitErr := emit(context.Background(), e.eventStore, task.ID, TaskFailed{
 			TaskID:      task.ID,
 			Error:       task.Error,
 			CompletedAt: completed,
@@ -259,7 +265,7 @@ func (e *Executor) execute(task *Task, params json.RawMessage) {
 		task.Status = StatusCompleted
 		slog.Info("task completed", "task_id", task.ID)
 
-		if emitErr := emit(context.Background(), e.EventStore, task.ID, TaskCompleted{
+		if emitErr := emit(context.Background(), e.eventStore, task.ID, TaskCompleted{
 			TaskID:      task.ID,
 			Summary:     task.Summary,
 			ArtifactID:  task.ArtifactID,
@@ -272,7 +278,7 @@ func (e *Executor) execute(task *Task, params json.RawMessage) {
 }
 
 func (e *Executor) executeClaude(ctx context.Context, task *Task, params json.RawMessage) error {
-	pb := e.PromptBuilder
+	pb := e.promptBuilder
 	if pb == nil {
 		pb = DefaultPromptBuilder
 	}

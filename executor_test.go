@@ -58,16 +58,16 @@ func TestDefaultPromptBuilder(t *testing.T) {
 
 func TestCustomPromptBuilder(t *testing.T) {
 	store := newMemoryStore()
-	executor := NewExecutor("claude", "/tmp", "test", store)
-	defer executor.Shutdown()
 
 	called := false
-	executor.PromptBuilder = func(description string) string {
+	pb := func(description string) string {
 		called = true
 		return "custom: " + description
 	}
+	executor := NewExecutor("claude", "/tmp", "test", store, WithPromptBuilder(pb))
+	defer executor.Shutdown()
 
-	result := executor.PromptBuilder("do something")
+	result := pb("do something")
 	if !called {
 		t.Error("custom prompt builder should have been called")
 	}
