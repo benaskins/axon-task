@@ -16,10 +16,10 @@ axon-task is a domain package — it provides types and HTTP handlers that you a
 
 ## Key types
 
-- **`Worker`** — interface for task execution (`Execute(ctx, params) error`)
+- **`Worker`** — interface for task execution (`Execute(ctx, params json.RawMessage) error`)
 - **`Task`** — task definition with status tracking (queued, running, completed, failed)
 - **`Executor`** — queues tasks and dispatches to registered workers
-- **`Store`** — persistence interface for task state (`Save`, `Get`, `ListByAgent`)
+- **`Store`** — persistence interface for task state (`Save`, `Get`, `ListByAgent`, `RunMigrations`)
 - **`TaskHandler`** — HTTP handlers for task submission, retrieval, and listing
 - **`tasktest.MemoryStore`** — in-memory store for tests
 
