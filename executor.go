@@ -170,8 +170,23 @@ func (e *Executor) Store() Store {
 	return e.store
 }
 
+// Shutdown stops the worker loop and marks any remaining queued tasks as failed.
 func (e *Executor) Shutdown() {
 	close(e.done)
+
+	// Drain queued tasks that will never be processed
+	for {
+		select {
+		case qt := <-e.queue:
+			qt.task.Status = StatusFailed
+			qt.task.Error = "server shutting down"
+			if err := e.store.Save(context.Background(), qt.task); err != nil {
+				slog.Error("failed to mark queued task as failed during shutdown", "task_id", qt.task.ID, "error", err)
+			}
+		default:
+			return
+		}
+	}
 }
 
 func (e *Executor) worker() {
