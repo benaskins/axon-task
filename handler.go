@@ -92,7 +92,7 @@ func (h *TaskHandler) submitClaudeSession(w http.ResponseWriter, raw json.RawMes
 	task, err := h.executor.Submit(params.Description, params.RequestedBy, params.Username)
 	if err != nil {
 		slog.Error("failed to submit task", "error", err, "requested_by", params.RequestedBy, "client_cn", clientCN)
-		axon.WriteError(w, http.StatusServiceUnavailable, err.Error())
+		axon.WriteError(w, http.StatusServiceUnavailable, "failed to submit task")
 		return
 	}
 
@@ -120,7 +120,7 @@ func (h *TaskHandler) submitGeneric(w http.ResponseWriter, taskType string, raw 
 	task, err := h.executor.SubmitTask(taskType, "", "", "", "", raw)
 	if err != nil {
 		slog.Error("failed to submit task", "error", err, "type", taskType, "client_cn", clientCN)
-		axon.WriteError(w, http.StatusServiceUnavailable, err.Error())
+		axon.WriteError(w, http.StatusServiceUnavailable, "failed to submit task")
 		return
 	}
 
@@ -210,7 +210,7 @@ func (h *TaskHandler) IssueAgentCert(w http.ResponseWriter, r *http.Request) {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		slog.Error("agent cert issuance failed", "slug", req.Slug, "username", req.Username, "client_cn", clientCN, "error", err, "output", string(output))
-		axon.WriteError(w, http.StatusInternalServerError, "cert issuance failed: "+err.Error())
+		axon.WriteError(w, http.StatusInternalServerError, "cert issuance failed")
 		return
 	}
 
