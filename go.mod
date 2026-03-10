@@ -1,16 +1,16 @@
 module github.com/benaskins/axon-task
 
-go 1.26.0
+go 1.26.1
 
 require github.com/benaskins/axon v0.3.0
 
 require (
+	github.com/benaskins/axon-fact v0.1.1
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.11.2
 )
 
 require (
-	github.com/benaskins/axon-fact v0.1.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/caarlos0/env/v11 v11.3.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
