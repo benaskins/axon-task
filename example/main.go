@@ -10,8 +10,8 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/benaskins/axon"
 	task "github.com/benaskins/axon-task"
-	"github.com/benaskins/axon-task/tasktest"
 )
 
 // ResizeParams defines the input for the resize worker.
@@ -35,8 +35,11 @@ func (w *ResizeWorker) Execute(ctx context.Context, params json.RawMessage) erro
 }
 
 func main() {
-	store := tasktest.NewMemoryStore()
-	executor := task.NewExecutor("", "", "", store)
+	db := axon.MustOpenDB("postgres://localhost:5432/myapp", "task")
+	axon.MustRunMigrations(db, task.Migrations)
+
+	store := task.NewPostgresStore(db)
+	executor := task.NewExecutor("claude", "/srv/myapp", "sonnet", store)
 	executor.RegisterWorker("resize", &ResizeWorker{})
 
 	handler := task.NewTaskHandler(executor, "")

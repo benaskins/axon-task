@@ -308,10 +308,6 @@ type memoryStore struct {
 	tasks map[string]*Task
 }
 
-func (s *memoryStore) RunMigrations(_ context.Context) error {
-	return nil
-}
-
 func (s *memoryStore) Save(_ context.Context, task *Task) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

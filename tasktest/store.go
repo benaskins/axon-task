@@ -18,10 +18,6 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{items: make(map[string]*task.Task)}
 }
 
-func (s *MemoryStore) RunMigrations(_ context.Context) error {
-	return nil
-}
-
 func (s *MemoryStore) Save(_ context.Context, t *task.Task) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

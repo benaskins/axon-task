@@ -15,9 +15,6 @@ type ReadStore interface {
 type ReadModelWriter interface {
 	// Save persists a task (insert or update).
 	Save(ctx context.Context, task *Task) error
-
-	// RunMigrations applies the database schema.
-	RunMigrations(ctx context.Context) error
 }
 
 // Store combines ReadStore and ReadModelWriter. Composition roots provide

@@ -7,7 +7,6 @@ require github.com/benaskins/axon v0.3.0
 require (
 	github.com/benaskins/axon-fact v0.1.1
 	github.com/google/uuid v1.6.0
-	github.com/lib/pq v1.11.2
 )
 
 require (
