@@ -22,3 +22,4 @@ go vet ./...
 - `migrations.go` — embedded SQL migrations
 - `tasktest/store.go` — in-memory store for tests
 - `doc.go` — package documentation
+- `CLAUDE.md` — Claude-specific documentation

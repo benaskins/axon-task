@@ -10,7 +10,7 @@ Generic asynchronous task runner with pluggable workers. Tasks are submitted via
 go get github.com/benaskins/axon-task@latest
 ```
 
-Requires Go 1.24+.
+Requires Go 1.26+.
 
 axon-task is a domain package — it provides types and HTTP handlers that you assemble in your own composition root. See [`example/main.go`](example/main.go) for a minimal wiring example.
 
@@ -51,7 +51,7 @@ log.Fatal(http.ListenAndServe(":8090", mux))
 - **`Store`** — combines `ReadStore` and `ReadModelWriter`; `PostgresStore` is the included implementation
 - **`TaskHandler`** — HTTP handlers for task submission, retrieval, listing, and agent cert issuance
 - **`TaskProjector`** — projects task lifecycle events (via axon-fact) into the read model
-- **`tasktest.MemoryStore`** — in-memory store for tests
+- **`tasktest.MemoryStore`** — in-memory store for tests (in the `tasktest` package)
 
 ## Event sourcing
 
