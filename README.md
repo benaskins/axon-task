@@ -45,10 +45,28 @@ log.Fatal(http.ListenAndServe(":8090", mux))
 
 - **`Worker`** — interface for task execution (`Execute(ctx, params json.RawMessage) error`)
 - **`Task`** — task definition with status tracking (queued, running, completed, failed)
-- **`Executor`** — queues tasks and dispatches to registered workers
-- **`Store`** — persistence interface for task state (`Save`, `Get`, `ListByAgent`)
-- **`TaskHandler`** — HTTP handlers for task submission, retrieval, and listing
+- **`Executor`** — queues tasks and dispatches to registered workers; configured via `Option` functions
+- **`ReadStore`** — read-only interface (`Get`, `ListByAgent`)
+- **`ReadModelWriter`** — write interface for projectors (`Save`)
+- **`Store`** — combines `ReadStore` and `ReadModelWriter`; `PostgresStore` is the included implementation
+- **`TaskHandler`** — HTTP handlers for task submission, retrieval, listing, and agent cert issuance
+- **`TaskProjector`** — projects task lifecycle events (via axon-fact) into the read model
 - **`tasktest.MemoryStore`** — in-memory store for tests
+
+## Event sourcing
+
+Task lifecycle is modelled as domain events (`TaskSubmitted`, `TaskStarted`, `TaskCompleted`, `TaskFailed`) using axon-fact. Supply a durable `fact.EventStore` via `WithEventStore` and wire up `DefaultProjectors` to project events into the read model.
+
+## TLS / mTLS
+
+`LoadTLSConfig` loads a CA certificate for client verification. The `RequireClientCert` middleware rejects requests without a verified client certificate and adds the client CN to the request context.
+
+## Options
+
+`NewExecutor` accepts functional options:
+
+- `WithEventStore(es)` — use a durable event store instead of the default in-memory one
+- `WithPromptBuilder(pb)` — customise the prompt used for Claude session tasks
 
 ## License
 
