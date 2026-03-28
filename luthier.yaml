@@ -1,0 +1,16 @@
+name: axon-task
+purpose: Generic async task runner with pluggable workers
+use_when: Async/background work
+deterministic: true
+snippet:
+  imports:
+    - path: github.com/benaskins/axon-task
+      alias: task
+  requires:
+    - github.com/benaskins/axon-task
+  deps:
+    - axon-fact
+  setup: |
+    taskStore := task.NewPostgresStore(db)
+    _ = task.NewExecutor("agent", ".", "sonnet", taskStore)
+    // TODO: register workers with executor.RegisterWorker(name, worker)
