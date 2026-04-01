@@ -265,11 +265,12 @@ func TestMemoryStoreListByAgent(t *testing.T) {
 		{ID: "2", Type: "claude_session", Status: StatusRunning, Description: "task 2", RequestedBy: "agent-a", CreatedAt: time.Now().Add(-1 * time.Hour)},
 		{ID: "3", Type: "claude_session", Status: StatusCompleted, Description: "task 3", RequestedBy: "agent-b", CreatedAt: time.Now()},
 	}
+	ctx := context.Background()
 	for i := range tasks {
-		store.Save(nil, &tasks[i])
+		store.Save(ctx, &tasks[i])
 	}
 
-	results, err := store.ListByAgent(nil, "agent-a", 50, 0)
+	results, err := store.ListByAgent(ctx, "agent-a", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +281,7 @@ func TestMemoryStoreListByAgent(t *testing.T) {
 		t.Errorf("expected task 2 first (newest), got %s", results[0].ID)
 	}
 
-	results, err = store.ListByAgent(nil, "agent-a", 1, 0)
+	results, err = store.ListByAgent(ctx, "agent-a", 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +289,7 @@ func TestMemoryStoreListByAgent(t *testing.T) {
 		t.Fatalf("expected 1 task with limit=1, got %d", len(results))
 	}
 
-	results, err = store.ListByAgent(nil, "agent-a", 50, 10)
+	results, err = store.ListByAgent(ctx, "agent-a", 50, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
