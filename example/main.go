@@ -10,7 +10,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/benaskins/axon"
+	"github.com/benaskins/axon-base/migration"
+	"github.com/benaskins/axon-base/pool"
 	task "github.com/benaskins/axon-task"
 )
 
@@ -35,8 +36,18 @@ func (w *ResizeWorker) Execute(ctx context.Context, params json.RawMessage) erro
 }
 
 func main() {
-	db := axon.MustOpenDB("postgres://localhost:5432/myapp", "task")
-	axon.MustRunMigrations(db, task.Migrations)
+	p, err := pool.NewPool(context.Background(), "postgres://localhost:5432/myapp", "task")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer p.Close()
+	db, err := p.StdDB()
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := migration.Run(db, task.Migrations, "migrations"); err != nil {
+		log.Fatal(err)
+	}
 
 	store := task.NewPostgresStore(db)
 	executor := task.NewExecutor("claude", "/srv/myapp", "sonnet", store)

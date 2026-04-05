@@ -6,8 +6,8 @@ import (
 )
 
 // PostgresStore implements Store using PostgreSQL.
-// The caller is responsible for opening the database (via axon.OpenDB)
-// and running migrations (via axon.RunMigrations) before constructing the store.
+// The caller is responsible for opening the database (via pool.NewPool)
+// and running migrations (via migration.Run) before constructing the store.
 type PostgresStore struct {
 	db *sql.DB
 }
