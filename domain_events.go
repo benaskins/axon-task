@@ -2,50 +2,22 @@ package task
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"time"
 
 	fact "github.com/benaskins/axon-fact"
 )
-
-// EventTyper is implemented by all domain event structs.
-type EventTyper interface {
-	EventType() string
-}
-
-// newEvent creates a fact.Event from a domain event struct.
-func newEvent(stream string, data EventTyper) (fact.Event, error) {
-	raw, err := json.Marshal(data)
-	if err != nil {
-		return fact.Event{}, err
-	}
-	return fact.Event{
-		ID:     generateEventID(),
-		Stream: stream,
-		Type:   data.EventType(),
-		Data:   raw,
-	}, nil
-}
-
-func generateEventID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return hex.EncodeToString(b)
-}
 
 func taskStream(taskID string) string {
 	return "task-" + taskID
 }
 
 // emit appends a domain event to the event store. Returns nil if es is nil (no-op).
-func emit(ctx context.Context, es fact.EventStore, taskID string, data EventTyper) error {
+func emit(ctx context.Context, es fact.EventStore, taskID string, data fact.EventTyper) error {
 	if es == nil {
 		return nil
 	}
 	stream := taskStream(taskID)
-	ev, err := newEvent(stream, data)
+	ev, err := fact.NewEvent(stream, data)
 	if err != nil {
 		return err
 	}
